@@ -67,6 +67,7 @@ def get_all_workers():
         for name, t in threads.items()
     ]
 
+# 이건 다른 파일로 분리 되어도 될거같음
 def runner():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
