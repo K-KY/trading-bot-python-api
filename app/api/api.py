@@ -1,7 +1,7 @@
 import subprocess
 import uvicorn
 
-from app.model.char_data_collector.chart_collector import run_monitor_chart, get_all_workers
+from app.model.char_data_collector.chart_collector import run_monitor_chart, get_all_workers, stop_thread
 
 from fastapi import FastAPI
 
@@ -27,6 +27,9 @@ async def start_background_chart_monitoring(coin, interval):
 def workers():
     return get_all_workers()
 
+@app.get("/stop-worker")# 종료 요청하고 바로 다시 요청을 보냈을 때 종료 됨으로 반환됨
+def stop_worker(name:str) :
+    return stop_thread(name)
 
 if __name__ == "__main__":
     # 포트 8000에서 실행 중인 프로세스 ID 찾기
