@@ -12,9 +12,7 @@ BINANCE_WS_URL = "wss://fstream.binance.com/stream?streams={}@continuousKline_{}
 stop_event = {}
 threads = {}
 
-# 개별 쓰레드를 종료시킬 방법 생각
-
-#쓰레드 생성, 작업 할당
+# 쓰레드 생성, 작업 할당
 def run_monitor_chart(coin: str, interval: str):
     name = "thread-worker_" + str(len(threads) + 1) + "__coin__" + coin + "__interval__" + interval
 
@@ -29,22 +27,36 @@ def run_monitor_chart(coin: str, interval: str):
     stop_event[name] = event
     thread.start()
 
-#쓰레드가 수행할 작업
+# 쓰레드가 수행할 작업
 def __run_listen_kline(coin: str, interval: str, name):
     loop = runner()
     loop.run_until_complete(listen_binance_kline(coin, interval, name))
 
+#존재하지 않는 코인 검증
+async def is_valid_symbol(websocket, name: str):
+    try:
+        await asyncio.wait_for(websocket.recv(), timeout=5.0)
+        return True  # 또는 True 반환도 가능
+
+    except asyncio.TimeoutError:
+        print(f"[{name}] 웹소켓 데이터 수신 시간 초과")
+        return False  # 또는 False
+
 # binance 웹소켓 연결, 여기에 지표 추가
-async def listen_binance_kline(coin: str, interval: str, name:str):
+async def listen_binance_kline(coin: str, interval: str, name: str):
     ssl_context = ssl._create_unverified_context()
     url = BINANCE_WS_URL.format(coin, interval)
     async with websockets.connect(url, ssl=ssl_context) as websocket:
+        if not await is_valid_symbol(websocket, name):
+            stop_thread(name)
+
         print(f"WebSocket 연결됨! ({coin}, {interval})")
-        while not stop_event[name].is_set() :
+        while not stop_event[name].is_set():
             data = await websocket.recv()
             parsed = json.loads(data)
             kline = parsed['data']['k']
             print(kline)
+        stop_event[name].is_set()
 
 
 # 과거 차트 데이터 조회
@@ -73,7 +85,7 @@ def get_all_workers():
     ]
 
 ## 쓰레드 개별 종료 로직 개선의 여지가 있음
-def stop_thread(thread_name:str):
+def stop_thread(thread_name: str):
     if thread_name in stop_event and not threads[thread_name].is_alive():
         return thread_name + " 이미 종료됨"
     if thread_name in stop_event:
