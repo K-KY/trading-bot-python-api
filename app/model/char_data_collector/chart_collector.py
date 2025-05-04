@@ -5,6 +5,18 @@ import websockets
 import json
 import ssl
 import threading
+from ta.trend import SMAIndicator
+from ta.momentum import StochRSIIndicator
+from ta.volatility import BollingerBands
+from ta.volume import VolumeWeightedAveragePrice
+from pymongo import MongoClient
+
+
+import app.util.TimeStampConverter as tsc
+
+client = MongoClient("mongodb://root:root@localhost:27017/")
+db = client['testDB']
+collection = db['test']
 
 BASE_URL = "https://www.binance.com/fapi/v1/continuousKlines"
 BINANCE_WS_URL = "wss://fstream.binance.com/stream?streams={}@continuousKline_{}"
@@ -55,6 +67,9 @@ async def listen_binance_kline(coin: str, interval: str, name: str):
             data = await websocket.recv()
             parsed = json.loads(data)
             kline = parsed['data']['k']
+            kline['t'] = tsc.convert_unix(kline['t'])
+            kline['T'] = tsc.convert_unix(kline['T'])
+            save_data(coin, kline)
             print(kline)
         stop_event[name].is_set()
 
@@ -102,11 +117,81 @@ def runner():
 
 # gettimestamp = int((time.time() - 60 * 60 * 24 * 120) * 1000)  # 120일 전의 타임스탬프
 # data = collect_chart(1000, "ETHUSDT", "1d", gettimestamp)
-# print(data)
+# for i in range(len(data)) :
+#     data[i][0] = tsc.convert_unix(data[i][0])
+#     print(data[i])
 # 여기에 지표 분석 로직 추가
-
+#
 # data = collect_chart(100, "ETHUSDT", "1d", gettimestamp)
 # print(data)
 #
 # if __name__ == "__main__":
 #     asyncio.run(listen_binance_kline("btcusdt_perpetual", "1m"))
+
+
+
+def save_data(coin, kline):
+    interval = kline['i']  # '1m', '15m', etc.
+    t = kline['t']         # 시작 시간
+    te = kline['T']        # 끝 시간
+
+    candle = {
+        "t": t,
+        "te": te,
+        "rsi": 0,
+        "macd": 0,
+        "sma7": 0,
+        "sma20": 0,
+        "sma60": 0,
+        "sma120": 0,
+        "volume": 0,
+        "high": kline['h'],
+        "low": kline['l'],
+        "close": kline['c']
+    }
+
+    # 1. 동일한 symbol + interval + t 값의 데이터가 있는지 먼저 업데이트 시도
+    result = collection.update_one(
+        {
+            "symbol": coin,
+            f"chart.{interval}.t": t
+        },
+        {
+            "$set": {
+                f"chart.{interval}.$": candle
+            }
+        }
+    )
+
+    # 2. 없으면 새로 push
+    if result.matched_count == 0:
+        collection.update_one(
+            {"symbol": coin},
+            {"$push": {f"chart.{interval}": candle}},
+            upsert=True
+        )
+
+# 저장할 데이터
+# document = {
+#     "symbol": "ETHUSDT",
+#     "chart": {
+#         "1m": [
+#             {
+#                 "t": 1714368000000,
+#                 "te": 1714368059999,
+#                 "rsi": 45.2,
+#                 "macd": 0.0012,
+#                 "sma7": 1873.1,
+#                 "sma20": 1872.4,
+#                 "sma60": 1870.8,
+#                 "sma120": 1865.5,
+#                 "volume": 125.43,
+#                 "close": 1873.5
+#             }
+#         ],
+#         "15m": [],
+#         "1d": []
+#     }
+# }
+
+# 저장
