@@ -11,7 +11,6 @@ from ta.volatility import BollingerBands
 from ta.volume import VolumeWeightedAveragePrice
 from pymongo import MongoClient
 
-
 import app.util.TimeStampConverter as tsc
 
 client = MongoClient("mongodb://root:root@localhost:27017/")
@@ -23,6 +22,7 @@ BINANCE_WS_URL = "wss://fstream.binance.com/stream?streams={}@continuousKline_{}
 
 stop_event = {}
 threads = {}
+
 
 # 쓰레드 생성, 작업 할당
 def run_monitor_chart(coin: str, interval: str):
@@ -39,12 +39,14 @@ def run_monitor_chart(coin: str, interval: str):
     stop_event[name] = event
     thread.start()
 
+
 # 쓰레드가 수행할 작업
 def __run_listen_kline(coin: str, interval: str, name):
     loop = runner()
     loop.run_until_complete(listen_binance_kline(coin, interval, name))
 
-#존재하지 않는 코인 검증
+
+# 존재하지 않는 코인 검증
 async def is_valid_symbol(websocket, name: str):
     try:
         await asyncio.wait_for(websocket.recv(), timeout=5.0)
@@ -53,6 +55,7 @@ async def is_valid_symbol(websocket, name: str):
     except asyncio.TimeoutError:
         print(f"[{name}] 웹소켓 데이터 수신 시간 초과")
         return False  # 또는 False
+
 
 # binance 웹소켓 연결, 여기에 지표 추가
 async def listen_binance_kline(coin: str, interval: str, name: str):
@@ -69,7 +72,7 @@ async def listen_binance_kline(coin: str, interval: str, name: str):
             kline = parsed['data']['k']
             kline['t'] = tsc.convert_unix(kline['t'])
             kline['T'] = tsc.convert_unix(kline['T'])
-            save_data(coin, kline)
+            save_live_data(coin, kline)
             print(kline)
         stop_event[name].is_set()
 
@@ -99,6 +102,7 @@ def get_all_workers():
         for name, t in threads.items()
     ]
 
+
 ## 쓰레드 개별 종료 로직 개선의 여지가 있음
 def stop_thread(thread_name: str):
     if thread_name in stop_event and not threads[thread_name].is_alive():
@@ -109,31 +113,81 @@ def stop_thread(thread_name: str):
         return thread_name + " 종료 요청 완료"
     return thread_name + " 찾을 수 없음"
 
+
 # 이건 다른 파일로 분리 되어도 될거같음
 def runner():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     return loop
 
+
 # gettimestamp = int((time.time() - 60 * 60 * 24 * 120) * 1000)  # 120일 전의 타임스탬프
 # data = collect_chart(1000, "ETHUSDT", "1d", gettimestamp)
 # for i in range(len(data)) :
 #     data[i][0] = tsc.convert_unix(data[i][0])
 #     print(data[i])
-# 여기에 지표 분석 로직 추가
-#
-# data = collect_chart(100, "ETHUSDT", "1d", gettimestamp)
-# print(data)
+# # 여기에 지표 분석 로직 추가
 #
 # if __name__ == "__main__":
 #     asyncio.run(listen_binance_kline("btcusdt_perpetual", "1m"))
 
+def save_data(limit: int, coin: str, interval: str, time_stamp: str):
+    chart = collect_chart(limit, coin, interval, time_stamp)
+
+    for i in range(len(chart)):
+        t = tsc.convert_unix(chart[i][0])
+        te = tsc.convert_unix(chart[i][6])
+        candle = {
+            "t": t,
+            "te": te,
+            "rsi": 0,
+            "macd": 0,
+            "sma7": 0,
+            "sma20": 0,
+            "sma60": 0,
+            "sma120": 0,
+            "volume": 0,
+            "high": chart[i][2],
+            "low": chart[i][3],
+            "close": chart[i][4]
+        }
+
+        # 동일 t 값 존재 여부 확인 후 업데이트 또는 삽입
+        result = collection.update_one(
+            {
+                "symbol": coin,
+                f"chart.{interval}.t": t
+            },
+            {
+                "$set": {
+                    f"chart.{interval}.$": candle
+                }
+            }
+        )
+
+        if result.matched_count == 0:
+            collection.update_one(
+                {"symbol": coin},
+                {"$push": {f"chart.{interval}": candle}},
+                upsert=True
+            )
 
 
-def save_data(coin, kline):
+def get_time_stamp_range(interval: str, limit):
+    interval = list(interval)
+    if interval[1] == 'h':
+        return int((time.time() - 60 * 60 * int(interval[0]) * limit) * 1000)
+    if interval[1] == 'm':
+        return int((time.time() - 60 * int(interval[0]) * limit) * 1000)
+    if interval[1] == 'd':
+        return int((time.time() - 60 * 60 * 24 * int(interval[0]) * limit) * 1000)
+    return int((time.time() - 60 * 60 * 24 * int(interval[0]) * 300) * 1000)
+
+
+def save_live_data(coin, kline):
     interval = kline['i']  # '1m', '15m', etc.
-    t = kline['t']         # 시작 시간
-    te = kline['T']        # 끝 시간
+    t = kline['t']  # 시작 시간
+    te = kline['T']  # 끝 시간
 
     candle = {
         "t": t,
