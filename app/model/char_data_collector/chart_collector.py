@@ -1,3 +1,4 @@
+import pandas as pd
 import requests
 import time
 import asyncio
@@ -5,6 +6,7 @@ import websockets
 import json
 import ssl
 import threading
+import ta as ta
 from ta.trend import SMAIndicator
 from ta.momentum import StochRSIIndicator
 from ta.volatility import BollingerBands
@@ -12,6 +14,9 @@ from ta.volume import VolumeWeightedAveragePrice
 from pymongo import MongoClient
 
 import app.util.TimeStampConverter as tsc
+
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
 
 client = MongoClient("mongodb://root:root@localhost:27017/")
 db = client['testDB']
@@ -27,6 +32,9 @@ threads = {}
 # 쓰레드 생성, 작업 할당
 def run_monitor_chart(coin: str, interval: str):
     name = "thread-worker_" + str(len(threads) + 1) + "__coin__" + coin + "__interval__" + interval
+
+    # timestamp = get_time_stamp_range(interval, 300)
+    # save_data(300, coin, interval, timestamp)
 
     event = threading.Event()
     thread = threading.Thread(
@@ -72,7 +80,7 @@ async def listen_binance_kline(coin: str, interval: str, name: str):
             kline = parsed['data']['k']
             kline['t'] = tsc.convert_unix(kline['t'])
             kline['T'] = tsc.convert_unix(kline['T'])
-            save_live_data(coin, kline)
+            # save_live_data(coin, kline)
             print(kline)
         stop_event[name].is_set()
 
@@ -88,7 +96,7 @@ def collect_chart(limit: int, coin: str, interval: str, time_stamp: str):
     }
     response = requests.get(BASE_URL, params=params)
     response.raise_for_status()
-    return response.json()
+    return calculate_ta(response.json())
 
 
 ## 작업중인 쓰레드 반환
@@ -121,19 +129,8 @@ def runner():
     return loop
 
 
-# gettimestamp = int((time.time() - 60 * 60 * 24 * 120) * 1000)  # 120일 전의 타임스탬프
-# data = collect_chart(1000, "ETHUSDT", "1d", gettimestamp)
-# for i in range(len(data)) :
-#     data[i][0] = tsc.convert_unix(data[i][0])
-#     print(data[i])
-# # 여기에 지표 분석 로직 추가
-#
-# if __name__ == "__main__":
-#     asyncio.run(listen_binance_kline("btcusdt_perpetual", "1m"))
-
-def save_data(limit: int, coin: str, interval: str, time_stamp: str):
-    chart = collect_chart(limit, coin, interval, time_stamp)
-
+def convert_data(chart):
+    candles = []
     for i in range(len(chart)):
         t = tsc.convert_unix(chart[i][0])
         te = tsc.convert_unix(chart[i][6])
@@ -142,25 +139,32 @@ def save_data(limit: int, coin: str, interval: str, time_stamp: str):
             "te": te,
             "rsi": 0,
             "macd": 0,
+            "signal": 0,
             "sma7": 0,
             "sma20": 0,
             "sma60": 0,
             "sma120": 0,
-            "volume": 0,
+            "volume": chart[i][5],
             "high": chart[i][2],
             "low": chart[i][3],
             "close": chart[i][4]
         }
+        candles.append(candle)
+    return candles
+
+
+def save_data(chart, coin, interval):
+    for i in range(len(chart)):
 
         # 동일 t 값 존재 여부 확인 후 업데이트 또는 삽입
         result = collection.update_one(
             {
                 "symbol": coin,
-                f"chart.{interval}.t": t
+                f"chart.{interval}.t": chart[i][0]
             },
             {
                 "$set": {
-                    f"chart.{interval}.$": candle
+                    f"chart.{interval}.$": chart[i]
                 }
             }
         )
@@ -168,7 +172,7 @@ def save_data(limit: int, coin: str, interval: str, time_stamp: str):
         if result.matched_count == 0:
             collection.update_one(
                 {"symbol": coin},
-                {"$push": {f"chart.{interval}": candle}},
+                {"$push": {f"chart.{interval}": chart[i]}},
                 upsert=True
             )
 
@@ -188,17 +192,17 @@ def save_live_data(coin, kline):
     interval = kline['i']  # '1m', '15m', etc.
     t = kline['t']  # 시작 시간
     te = kline['T']  # 끝 시간
-
     candle = {
         "t": t,
         "te": te,
         "rsi": 0,
         "macd": 0,
+        "signal": 0,
         "sma7": 0,
         "sma20": 0,
         "sma60": 0,
         "sma120": 0,
-        "volume": 0,
+        "volume": kline['v'],
         "high": kline['h'],
         "low": kline['l'],
         "close": kline['c']
@@ -225,6 +229,23 @@ def save_live_data(coin, kline):
             upsert=True
         )
 
+def calculate_ta(data):
+    candles = convert_data(data)
+
+    frame = pd.DataFrame(candles)
+    frame.rename(columns={0: 'ts', 1: 'open', 2: 'high', 3: 'low', 4: 'close', 5: 'volume', 6: 'te', 7:'rsi', 8:'signal'},
+                 inplace=True)
+    frame['close'] = frame['close'].astype(float)
+    frame['sma7'] = ta.trend.sma_indicator(frame['close'], window=7)
+    frame['sma20'] = ta.trend.sma_indicator(frame['close'], window=20)
+    frame['sma60'] = ta.trend.sma_indicator(frame['close'], window=60)
+    frame['sma120'] = ta.trend.sma_indicator(frame['close'], window=120)
+    frame['rsi'] = ta.momentum.RSIIndicator(close=frame['close'], window=14).rsi()
+    frame['macd'] = ta.trend.macd(frame['close'])
+    frame['signal'] = ta.trend.macd_signal(frame['close'])
+    return frame
+
+
 # 저장할 데이터
 # document = {
 #     "symbol": "ETHUSDT",
@@ -249,3 +270,28 @@ def save_live_data(coin, kline):
 # }
 
 # 저장
+# gettimestamp = int((time.time() - 60 * 60 * 24 * 300) * 1000)  # 120일 전의 타임스탬프
+# data = collect_chart(1000, "ETHUSDT", "1d", gettimestamp)
+# print(data.to_string(index=False))
+# for i in range(len(data)):
+#     data[i][0] = tsc.convert_unix(data[i][0])
+#     data[i][6] = tsc.convert_unix(data[i][6])
+# candles = convert_data(data)
+#
+# frame = pd.DataFrame(candles)
+# frame.rename(columns={0: 'ts', 1: 'open', 2: 'high', 3: 'low', 4: 'close', 5: 'volume', 6: 'te'},
+#              inplace=True)
+# frame['close'] = frame['close'].astype(float)
+# frame['sma7'] = ta.trend.sma_indicator(frame['close'], window=7)
+# frame['sma20'] = ta.trend.sma_indicator(frame['close'], window=20)
+# frame['sma60'] = ta.trend.sma_indicator(frame['close'], window=60)
+# frame['sma120'] = ta.trend.sma_indicator(frame['close'], window=120)
+# frame['rsi'] = ta.momentum.RSIIndicator(close=frame['close'], window=14).rsi()
+# frame['macd'] = ta.trend.macd(frame['close'])
+# frame['signal'] = ta.trend.macd_signal(frame['close'])
+#
+# print(frame.to_string(index=False))
+# 여기에 지표 분석 로직 추가
+
+if __name__ == "__main__":
+    asyncio.run(listen_binance_kline("btcusdt_perpetual", "1m"))
