@@ -1,11 +1,6 @@
 import pandas as pd
 import requests
 import time
-import asyncio
-import websockets
-import json
-import ssl
-import threading
 import ta as ta
 from ta.trend import SMAIndicator
 from ta.momentum import StochRSIIndicator
@@ -25,67 +20,9 @@ collection = db['test']
 BASE_URL = "https://www.binance.com/fapi/v1/continuousKlines"
 BINANCE_WS_URL = "wss://fstream.binance.com/stream?streams={}@continuousKline_{}"
 
-stop_event = {}
-threads = {}
-
-
-# 쓰레드 생성, 작업 할당
-def run_monitor_chart(coin: str, interval: str):
-    name = "thread-worker_" + str(len(threads) + 1) + "__coin__" + coin + "__interval__" + interval
-
-    # timestamp = get_time_stamp_range(interval, 300)
-    # save_data(300, coin, interval, timestamp)
-
-    event = threading.Event()
-    thread = threading.Thread(
-        target=__run_listen_kline,
-        args=(coin, interval, name),
-        name=name,
-        daemon=True
-    )
-    threads[name] = thread
-    stop_event[name] = event
-    thread.start()
-
-
-# 쓰레드가 수행할 작업
-def __run_listen_kline(coin: str, interval: str, name):
-    loop = runner()
-    loop.run_until_complete(listen_binance_kline(coin, interval, name))
-
-
-# 존재하지 않는 코인 검증
-async def is_valid_symbol(websocket, name: str):
-    try:
-        await asyncio.wait_for(websocket.recv(), timeout=5.0)
-        return True  # 또는 True 반환도 가능
-
-    except asyncio.TimeoutError:
-        print(f"[{name}] 웹소켓 데이터 수신 시간 초과")
-        return False  # 또는 False
-
-
-# binance 웹소켓 연결, 여기에 지표 추가
-async def listen_binance_kline(coin: str, interval: str, name: str):
-    ssl_context = ssl._create_unverified_context()
-    url = BINANCE_WS_URL.format(coin, interval)
-    async with websockets.connect(url, ssl=ssl_context) as websocket:
-        if not await is_valid_symbol(websocket, name):
-            stop_thread(name)
-
-        print(f"WebSocket 연결됨! ({coin}, {interval})")
-        while not stop_event[name].is_set():
-            data = await websocket.recv()
-            parsed = json.loads(data)
-            kline = parsed['data']['k']
-            kline['t'] = tsc.convert_unix(kline['t'])
-            kline['T'] = tsc.convert_unix(kline['T'])
-            # save_live_data(coin, kline)
-            print(kline)
-        stop_event[name].is_set()
-
 
 # 과거 차트 데이터 조회
+# 데이터 프레임을 리턴
 def collect_chart(limit: int, coin: str, interval: str, time_stamp: str):
     params = {
         "limit": limit,
@@ -97,36 +34,6 @@ def collect_chart(limit: int, coin: str, interval: str, time_stamp: str):
     response = requests.get(BASE_URL, params=params)
     response.raise_for_status()
     return calculate_ta(response.json())
-
-
-## 작업중인 쓰레드 반환
-def get_all_workers():
-    return [
-        {
-            "name": name,
-            "alive": t.is_alive(),
-            "ident": t.ident
-        }
-        for name, t in threads.items()
-    ]
-
-
-## 쓰레드 개별 종료 로직 개선의 여지가 있음
-def stop_thread(thread_name: str):
-    if thread_name in stop_event and not threads[thread_name].is_alive():
-        return thread_name + " 이미 종료됨"
-    if thread_name in stop_event:
-        stop_event[thread_name].set()  # 쓰레드 종료 신호
-        print(f"[{thread_name}] 종료 요청됨")
-        return thread_name + " 종료 요청 완료"
-    return thread_name + " 찾을 수 없음"
-
-
-# 이건 다른 파일로 분리 되어도 될거같음
-def runner():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    return loop
 
 
 def convert_data(chart):
@@ -229,12 +136,14 @@ def save_live_data(coin, kline):
             upsert=True
         )
 
+
 def calculate_ta(data):
     candles = convert_data(data)
 
     frame = pd.DataFrame(candles)
-    frame.rename(columns={0: 'ts', 1: 'open', 2: 'high', 3: 'low', 4: 'close', 5: 'volume', 6: 'te', 7:'rsi', 8:'signal'},
-                 inplace=True)
+    frame.rename(
+        columns={0: 'ts', 1: 'open', 2: 'high', 3: 'low', 4: 'close', 5: 'volume', 6: 'te', 7: 'rsi', 8: 'signal'},
+        inplace=True)
     frame['close'] = frame['close'].astype(float)
     frame['sma7'] = ta.trend.sma_indicator(frame['close'], window=7)
     frame['sma20'] = ta.trend.sma_indicator(frame['close'], window=20)
@@ -244,7 +153,6 @@ def calculate_ta(data):
     frame['macd'] = ta.trend.macd(frame['close'])
     frame['signal'] = ta.trend.macd_signal(frame['close'])
     return frame
-
 
 # 저장할 데이터
 # document = {
@@ -293,5 +201,5 @@ def calculate_ta(data):
 # print(frame.to_string(index=False))
 # 여기에 지표 분석 로직 추가
 
-if __name__ == "__main__":
-    asyncio.run(listen_binance_kline("btcusdt_perpetual", "1m"))
+# if __name__ == "__main__":
+#     asyncio.run(listen_binance_kline("btcusdt_perpetual", "1m"))
