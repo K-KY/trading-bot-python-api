@@ -1,8 +1,7 @@
 import subprocess
 import uvicorn
 
-from app.model.char_data_collector.chart_collector import (run_monitor_chart, get_all_workers,
-                                                           stop_thread, save_data, get_time_stamp_range, collect_chart,
+from app.model.char_data_collector.chart_collector import (save_data, get_time_stamp_range, collect_chart,
                                                            convert_data)
 from app.model.char_data_collector.thread_manager import ThreadManager
 
