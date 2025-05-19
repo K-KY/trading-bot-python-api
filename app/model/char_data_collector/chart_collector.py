@@ -141,9 +141,6 @@ def calculate_ta(data):
     candles = convert_data(data)
 
     frame = pd.DataFrame(candles)
-    frame.rename(
-        columns={0: 'ts', 1: 'open', 2: 'high', 3: 'low', 4: 'close', 5: 'volume', 6: 'te', 7: 'rsi', 8: 'signal'},
-        inplace=True)
     frame['close'] = frame['close'].astype(float)
     frame['sma7'] = ta.trend.sma_indicator(frame['close'], window=7)
     frame['sma20'] = ta.trend.sma_indicator(frame['close'], window=20)
@@ -178,9 +175,9 @@ def calculate_ta(data):
 # }
 
 # 저장
-# gettimestamp = int((time.time() - 60 * 60 * 24 * 300) * 1000)  # 120일 전의 타임스탬프
-# data = collect_chart(1000, "ETHUSDT", "1d", gettimestamp)
-# print(data.to_string(index=False))
+gettimestamp = int((time.time() - 60 * 60 * 24 * 300) * 1000)  # 120일 전의 타임스탬프
+data = collect_chart(1000, "ETHUSDT", "1d", gettimestamp)
+print(data.to_string(index=False))
 # for i in range(len(data)):
 #     data[i][0] = tsc.convert_unix(data[i][0])
 #     data[i][6] = tsc.convert_unix(data[i][6])
