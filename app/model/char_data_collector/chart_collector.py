@@ -23,7 +23,9 @@ BINANCE_WS_URL = "wss://fstream.binance.com/stream?streams={}@continuousKline_{}
 
 # 과거 차트 데이터 조회
 # 데이터 프레임을 리턴
-def collect_chart(limit: int, coin: str, interval: str, time_stamp: str):
+def collect_chart(limit: int, coin: str, interval: str):
+    coin = coin.split("_")[0].upper()
+    time_stamp = get_time_stamp_range(interval, limit)
     params = {
         "limit": limit,
         "pair": coin,
@@ -59,29 +61,51 @@ def convert_data(chart):
         candles.append(candle)
     return candles
 
+def convert_live_data(data) :
+    t = tsc.convert_unix(data["t"])
+    te = tsc.convert_unix(data["T"])
 
-def save_data(chart, coin, interval):
+    candle = {
+        "t": t,
+        "te": te,
+        "rsi": 0,
+        "macd": 0,
+        "signal": 0,
+        "sma7": 0,
+        "sma20": 0,
+        "sma60": 0,
+        "sma120": 0,
+        "volume": data["v"],
+        "high": data["h"],
+        "low": data["l"],
+        "close": data["c"]
+    }
+    return candle
+
+def save_data(chart: pd.DataFrame, coin: str, interval: str):
     for i in range(len(chart)):
+        row = chart.iloc[i].to_dict()
+        t_value = row["t"]
 
-        # 동일 t 값 존재 여부 확인 후 업데이트 또는 삽입
-        result = collection.update_one(
-            {
-                "symbol": coin,
-                f"chart.{interval}.t": chart[i][0]
-            },
-            {
-                "$set": {
-                    f"chart.{interval}.$": chart[i]
-                }
-            }
-        )
+        # 기존 t 값이 있는지 확인
+        existing = collection.find_one({
+            "symbol": coin,
+            f"chart.{interval}.t": t_value
+        })
 
-        if result.matched_count == 0:
+        if existing:
+            # 기존 데이터 삭제 (교체 목적)
             collection.update_one(
                 {"symbol": coin},
-                {"$push": {f"chart.{interval}": chart[i]}},
-                upsert=True
+                {"$pull": {f"chart.{interval}": {"t": t_value}}}
             )
+
+        # 새 row 삽입
+        collection.update_one(
+            {"symbol": coin},
+            {"$push": {f"chart.{interval}": row}},
+            upsert=True
+        )
 
 
 def get_time_stamp_range(interval: str, limit):
@@ -176,7 +200,7 @@ def calculate_ta(data):
 
 # 저장
 gettimestamp = int((time.time() - 60 * 60 * 24 * 300) * 1000)  # 120일 전의 타임스탬프
-data = collect_chart(1000, "ETHUSDT", "1d", gettimestamp)
+data = collect_chart(1000, "ETHUSDT", "1d")
 print(data.to_string(index=False))
 # for i in range(len(data)):
 #     data[i][0] = tsc.convert_unix(data[i][0])

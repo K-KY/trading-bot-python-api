@@ -5,6 +5,7 @@ import ssl
 import threading
 
 import app.util.TimeStampConverter as tsc
+from app.model.char_data_collector.chart_collector import collect_chart, save_data, convert_live_data
 
 BASE_URL = "https://www.binance.com/fapi/v1/continuousKlines"
 BINANCE_WS_URL = "wss://fstream.binance.com/stream?streams={}@continuousKline_{}"
@@ -70,6 +71,10 @@ class ThreadManager():
 
     # binance 웹소켓 연결, 여기에 지표 추가
     async def listen_binance_kline(self, coin: str, interval: str, name: str):
+        candles = collect_chart(300, coin, interval)
+        # save_data(candles, coin, interval)
+        print(candles.to_string(index=False))
+
         ssl_context = ssl._create_unverified_context()
         url = BINANCE_WS_URL.format(coin, interval)
         async with websockets.connect(url, ssl=ssl_context) as websocket:
@@ -81,10 +86,9 @@ class ThreadManager():
                 data = await websocket.recv()
                 parsed = json.loads(data)
                 kline = parsed['data']['k']
-                kline['t'] = tsc.convert_unix(kline['t'])
-                kline['T'] = tsc.convert_unix(kline['T'])
+
                 # save_live_data(coin, kline)
-                print(kline)
+                print(convert_live_data(kline))
             self.stop_event[name].is_set()
 
     ## 작업중인 쓰레드 반환

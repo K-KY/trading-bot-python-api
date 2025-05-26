@@ -1,8 +1,7 @@
 import subprocess
 import uvicorn
 
-from app.model.char_data_collector.chart_collector import (save_data, get_time_stamp_range, collect_chart,
-                                                           convert_data)
+from app.model.char_data_collector.chart_collector import (save_data, get_time_stamp_range, collect_chart)
 from app.model.char_data_collector.thread_manager import ThreadManager
 
 from fastapi import FastAPI
@@ -36,8 +35,7 @@ def stop_worker(name:str) :
 
 @app.get("/save-chart")
 def save_chart(limit: int, coin: str, interval: str) :
-    time_stamp = get_time_stamp_range(interval, limit)
-    candles = convert_data(collect_chart(limit, coin, interval, time_stamp))
+    candles = collect_chart(limit, coin, interval)
     save_data(candles, coin, interval)
 
 if __name__ == "__main__":
